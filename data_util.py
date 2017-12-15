@@ -22,6 +22,7 @@ from gensim.models.keyedvectors import KeyedVectors
 from string import punctuation
 from nltk import pos_tag, pos_tag_sents
 
+
 class DataUtil:
     def __init__(self):
         self.config = Config()
