@@ -26,82 +26,179 @@ from nltk import pos_tag, pos_tag_sents
 class DataUtil:
     def __init__(self):
         self.config = Config()
-        self.tagger = StanfordNERTagger(model_filename=self.config.ner_model_path, path_to_jar=self.config.ner_jar_path)
-        self.stops = set(stopwords.words("english"))
+        # self.stops = set(stopwords.words("chinese"))
         self.lmtzr = WordNetLemmatizer()
-        self.postagger = StanfordPOSTagger(path_to_jar=self.config.pos_jar_path, model_filename=self.config.pos_model_path)
-        self.dependency_parser = StanfordDependencyParser(path_to_jar=self.config.dep_jar_path,
-                                                          path_to_models_jar=self.config.dep_model_path)
+        self.dim = self.config.embedding_size
+        self.w2v_model = self.build_w2v_model()
 
 # *********************************** FOR LOAD DATA & MODELS *********************************************
-
-
-    def load_word2vec_model(self):
-        self.model = KeyedVectors.load_word2vec_format(self.config.word2vec_model_path, binary=False)
-
-
-    def load_json(self, fname):
-        f = codecs.open(fname, 'rb', encoding='utf-8')
-        print fname + ' done'
-        data = json.load(f)
-        qas = [doc['qa'] for doc in data]
-        wikis = [doc['sentences'] for doc in data]
-        questions = [[qa['question'] for qa in qa_list] for qa_list in qas]
-        if 'test' in fname:
-            answer_indices = []
-            answers = []
+    def build_w2v_model(self, load=False):
+        if not load:
+            model = self.load_w2v_model()
+            self.save_model(model)
         else:
-            answers = [[qa['answer'] for qa in qa_list] for qa_list in qas]
-            answer_indices = [[qa['answer_sentence'] for qa in qa_list] for qa_list in qas]
-        return wikis, questions, answers, answer_indices
+            model = self.load_model()
+        return model
+
+    def save_model(self, model):
+        path = 'data/chinese.model'
+        with open(path, 'w') as f:
+            pickle.dump(model, f)
+        print 'model saved'
+
+    def load_model(self, path='data/chinese.model'):
+        with open(path, 'r') as f:
+            model = pickle.load(f)
+        return model
+
+    def encode_seq(self, seq):
+        len_diff = self.config.max_sent_len - len(seq)
+        embs = [ self.w2v_model[word] for word in seq.split(' ') if word and word in self.w2v_model]
+        embs.extend(len_diff*[0.0])
+        return np.array(embs)
 
 
-# *********************************** FOR PREPROCESSING *********************************************
+
+    def encode_by_averaging(self, utterance):
+        embs = [ self.w2v_model[word] for word in utterance.split(' ') if word and word in self.w2v_model]
+        # average of embeddings
+        if len(embs):
+            return np.mean(embs, axis=0)
+        else:
+            return np.zeros([self.dim],np.float32)
+
+    def load_w2v_model(self, fname="data/newsblogbbs.vec", load=False):
+        print "load model..."
+        with codecs.open(fname, 'r', "utf-8") as f:
+            vocab = self.load_w2v_data(f)
+        print vocab['</s>']
+        return vocab
+
+    def load_w2v_data(self, f):
+        size = 0
+        # vocab = []
+        # feature = []
+        vocab_dict = {}
+        flag = 0
+        while True:
+            line = f.readline()
+            if not line:
+                break
+            if flag == 0:
+                line = line.strip().split()
+                _, size = int(line[0]), int(line[1])
+                flag = 1
+                continue
+            line = line.strip().split()
+            if not line:
+                continue
+            w = line[0]
+            vec = [float(i) for i in line[1:]]
+            if len(vec) != size:
+                continue
+            vec = np.array(vec)
+            length = np.sqrt((vec ** 2).sum())
+            vec /= length
+            # print length,vec
+            vocab_dict[w] = vec
+        return vocab_dict
 
 
-    def lemmatize(self, word):
-        word = word.lower()
-        lemma = self.lmtzr.lemmatize(word, 'v')
-        if lemma == word:
-            lemma = self.lmtzr.lemmatize(word, 'n')
-        return lemma
+    def read_dialogs(self, fname='data/dialog_train.txt', with_indices=False):
+        def rm_index(row):
+            return [' '.join(row[0].split(' ')[1:])] + row[1:]
 
-    def lemmatize_sent(self, words):
-        return [self.lemmatize(word) for word in words]
+        def filter_(dialogs):
+            filtered_ = []
+            for row in dialogs:
+                if row[0][:6] != 'service_':
+                    filtered_.append(row)
+            return filtered_
 
-    def remove_non_alphanumeric(self, words):
-        return [re.sub(r'''([^\s\w])+''', '', word) for word in words]
+        with open(fname) as f:
+            dialogs = filter_([ rm_index(row.split('\t')) for row in  f.read().split('\n') ])
+            # organize dialogs -> dialog_indices
+            prev_idx = -1
+            n = 1
+            dialog_indices = []
+            updated_dialogs = []
+            for i, dialog in enumerate(dialogs):
+                if not dialogs[i][0]:
+                    dialog_indices.append({
+                        'start' : prev_idx + 1,
+                        'end' : i - n + 1
+                    })
+                    prev_idx = i-n
+                    n += 1
+                else:
+                    updated_dialogs.append(dialog)
+            if with_indices:
+                return updated_dialogs, dialog_indices[:-1]
 
-    def ner_sent(self, words):
-        ner_sent = self.tagger.tag(words)
-        return ner_sent
+            return updated_dialogs
 
-    def lower_sent(self, words):
-        return [word.lower() for word in words]
+    def get_utterances(self, dialogs=[]):
+        dialogs = dialogs if len(dialogs) else self.read_dialogs()
+        return [row[0] for row in dialogs]
 
-    def remove_stop_words(self, words):
-        return [word for word in words if word.lower() not in self.stops]
+    def get_responses(self, dialogs=[]):
+        dialogs = dialogs if len(dialogs) else self.read_dialogs()
+        return [row[1] for row in dialogs]
 
-    def remove_mark(self, word):
-        return ''.join([c for c in word if c not in punctuation])
+    def utterance_to_embed(self, ut):
+        return []
+    '''
+        Train
 
-    def is_all_puncs(self, token):
-        if all([x in punctuation for x in token]):
-            return True
-        return False
+        1. Prepare training examples
+            1.1 Format 'utterance \t action_template_id\n'
+        2. Prepare dev set
+        3. Organize trainset as list of dialogues
+    '''
 
-    def remove_punc_in_token(self, token):
-        return ''.join([x for x in token if x not in punctuation]).strip()
-
-    def preprocess_wiki(self, wiki):
-        raw_split = [word_tokenize(sent.replace(u"\u200b",'')) for sent in wiki]
-        remove_pure_punc = [[token for token in sent if not self.is_all_puncs(token)] for sent in raw_split]
-        remove_punc_in_words = [[self.remove_punc_in_token(token) for token in sent] for sent in remove_pure_punc]
-        ner = self.ner_tagging(remove_punc_in_words)
-        lower = [self.lower_sent(sent) for sent in remove_punc_in_words]
-        remove_stop = [self.remove_stop_words(sent) for sent in lower]
-        lemmatized = [self.lemmatize_sent(sent) for sent in remove_stop]
-        return remove_pure_punc, ner, lemmatized
+    # class Data():
+    #
+    #     def __init__(self, entity_tracker, action_tracker):
+    #
+    #         self.action_templates = action_tracker.get_action_templates()
+    #         self.et = entity_tracker
+    #         # prepare data
+    #         self.trainset = self.prepare_data()
+    #
+    #     def prepare_data(self):
+    #         # get dialogs from file
+    #         dialogs, dialog_indices = util.read_dialogs(with_indices=True)
+    #         # get utterances
+    #         utterances = util.get_utterances(dialogs)
+    #         # get responses
+    #         responses = util.get_responses(dialogs)
+    #         responses = [self.get_template_id(response) for response in responses]
+    #
+    #         trainset = []
+    #         for u, r in zip(utterances, responses):
+    #             trainset.append((u, r))
+    #
+    #         return trainset, dialog_indices
+    #
+    #     def get_template_id(self, response):
+    #
+    #         def extract_(response):
+    #             template = []
+    #             for word in response.split(' '):
+    #                 if 'resto_' in word:
+    #                     if 'phone' in word:
+    #                         template.append('<info_phone>')
+    #                     elif 'address' in word:
+    #                         template.append('<info_address>')
+    #                     else:
+    #                         template.append('<restaurant>')
+    #                 else:
+    #                     template.append(word)
+    #             return ' '.join(template)
+    #
+    #         return self.action_templates.index(
+    #             extract_(self.et.extract_entities(response, update=False))
+    #         )
 
 
 if __name__ == '__main__':

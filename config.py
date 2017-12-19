@@ -12,3 +12,8 @@ class Config:
         self.step_penalty = -1
         self.init_lr = 1e-3
         self.n_slots = 10
+        self.u_embed_size = 300
+        self.vocab_size = 10000
+        self.feature_size = 500
+        self.slot_types = [3,3,5]
+        self.max_sent_len = 30
