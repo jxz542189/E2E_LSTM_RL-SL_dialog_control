@@ -21,7 +21,7 @@ from math import log
 from gensim.models.keyedvectors import KeyedVectors
 from string import punctuation
 from nltk import pos_tag, pos_tag_sents
-
+from action_manipulator import ActionManipulator
 
 class DataUtil:
     def __init__(self):
@@ -30,7 +30,7 @@ class DataUtil:
         self.lmtzr = WordNetLemmatizer()
         self.dim = self.config.embedding_size
         self.w2v_model = self.build_w2v_model()
-
+        self.am = ActionManipulator()
 # *********************************** FOR LOAD DATA & MODELS *********************************************
     def build_w2v_model(self, load=False):
         if not load:
@@ -56,8 +56,6 @@ class DataUtil:
         embs = [ self.w2v_model[word] for word in seq.split(' ') if word and word in self.w2v_model]
         embs.extend(len_diff*[0.0])
         return np.array(embs)
-
-
 
     def encode_by_averaging(self, utterance):
         embs = [ self.w2v_model[word] for word in utterance.split(' ') if word and word in self.w2v_model]
@@ -145,60 +143,45 @@ class DataUtil:
         dialogs = dialogs if len(dialogs) else self.read_dialogs()
         return [row[1] for row in dialogs]
 
-    def utterance_to_embed(self, ut):
-        return []
-    '''
-        Train
+    def get_actions(self, dialogs=[]):
+        dialogs = dialogs if len(dialogs) else self.read_dialogs()
+        return [row[2] for row in dialogs]
 
-        1. Prepare training examples
-            1.1 Format 'utterance \t action_template_id\n'
-        2. Prepare dev set
-        3. Organize trainset as list of dialogues
-    '''
+    def get_slots(self, dialogs=[]):
+        dialogs = dialogs if len(dialogs) else self.read_dialogs()
+        return [row[3] for row in dialogs]
 
-    # class Data():
-    #
-    #     def __init__(self, entity_tracker, action_tracker):
-    #
-    #         self.action_templates = action_tracker.get_action_templates()
-    #         self.et = entity_tracker
-    #         # prepare data
-    #         self.trainset = self.prepare_data()
-    #
-    #     def prepare_data(self):
-    #         # get dialogs from file
-    #         dialogs, dialog_indices = util.read_dialogs(with_indices=True)
-    #         # get utterances
-    #         utterances = util.get_utterances(dialogs)
-    #         # get responses
-    #         responses = util.get_responses(dialogs)
-    #         responses = [self.get_template_id(response) for response in responses]
-    #
-    #         trainset = []
-    #         for u, r in zip(utterances, responses):
-    #             trainset.append((u, r))
-    #
-    #         return trainset, dialog_indices
-    #
-    #     def get_template_id(self, response):
-    #
-    #         def extract_(response):
-    #             template = []
-    #             for word in response.split(' '):
-    #                 if 'resto_' in word:
-    #                     if 'phone' in word:
-    #                         template.append('<info_phone>')
-    #                     elif 'address' in word:
-    #                         template.append('<info_address>')
-    #                     else:
-    #                         template.append('<restaurant>')
-    #                 else:
-    #                     template.append(word)
-    #             return ' '.join(template)
-    #
-    #         return self.action_templates.index(
-    #             extract_(self.et.extract_entities(response, update=False))
-    #         )
+    def txt_to_training_set(self):
+        dialogs, dialog_indices = self.read_dialogs(with_indices=True)
+        utterances = self.get_utterances(dialogs)
+        responses = self.get_responses(dialogs)
+        actions = self.get_actions(dialogs)
+        actions = [0] + actions[:-1]
+        slots = self.get_slots(dialogs)
+        action_labels = [self.get_action_label(action) for action in actions]
+        slot_labels = [self.get_goal_slot_label(slot) for slot in slots]
+        train_set = []
+        for u, r, a, s in zip(utterances, responses, action_labels, slot_labels):
+            train_set.append((u, r, a, s))
+
+        return train_set, dialog_indices
+
+    def get_action_label(self, action_label):
+        onehot = [0] * len(self.config.actions)
+        onehot[action_label] = 1
+        return np.array(onehot)
+
+    def get_goal_slot_label(self, slot_labels):
+        labels = np.zeros_like(self.config.slot_types)
+        for i in range(len(slot_labels)):
+            ind = slot_labels[i]
+            slot_type_n = self.config.slot_types[ind]
+            if ind>=0:
+                labels[i][ind] = 1
+            else:
+                for k in range(slot_type_n):
+                    labels[ind][k] = 1.0/slot_type_n
+        return labels
 
 
 if __name__ == '__main__':
