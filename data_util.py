@@ -101,7 +101,6 @@ class DataUtil:
             vocab_dict[w] = vec
         return vocab_dict
 
-
     def read_dialogs(self, fname='data/dialog_train.txt', with_indices=False):
         def rm_index(row):
             return [' '.join(row[0].split(' ')[1:])] + row[1:]
@@ -176,7 +175,7 @@ class DataUtil:
         for i in range(len(slot_labels)):
             ind = slot_labels[i]
             slot_type_n = self.config.slot_types[ind]
-            if ind>=0:
+            if ind >= 0:
                 labels[i][ind] = 1
             else:
                 for k in range(slot_type_n):
